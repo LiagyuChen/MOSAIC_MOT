@@ -324,9 +324,7 @@ class MosaicMOT(MosaicDetSeg):
 
         # Extract embeddings
         det_embeddings = np.array([feat.get('embedding', None) for feat in detection_features])
-        for feat in detection_features:
-            print("embedding shape: ", feat.get('embedding', {}).shape)
-            
+
         # Get track embeddings with shape checking
         track_embeddings = []
         for track in tracks:
@@ -343,8 +341,7 @@ class MosaicMOT(MosaicDetSeg):
                     track_embeddings.append(np.zeros(2304))  # Use typical embedding size
         
         track_embeddings = np.array(track_embeddings)
-        print("track_embeddings: ", track_embeddings.shape, "det_embeddings: ", det_embeddings.shape)
-        
+
         # Calculate embedding similarity with error handling
         raw_bi_softmax = self._bi_softmax_cosine_similarity(track_embeddings, det_embeddings)
         
@@ -357,15 +354,11 @@ class MosaicMOT(MosaicDetSeg):
             # For extra detections that have no tracks, set diagonal to 2.0 to ensure they're matched
             for i in range(n_tracks, n_detections):
                 bi_softmax_sim[i, i] = 2.0
-            
-        print(bi_softmax_sim.shape, "bi_softmax_sim: ", bi_softmax_sim, "mask_iou_matrix: ", mask_iou_matrix, "bbox_iou_matrix: ", bbox_iou_matrix)
-        
+
         # Combine metrics
         combined_matrix = (bbox_iou_matrix >= iou_threshold).astype(float) + \
                          (mask_iou_matrix >= mask_iou_threshold).astype(float) + \
                          (bi_softmax_sim >= embedding_threshold).astype(float)
-                         
-        print("combined_matrix: ", combined_matrix)
 
         # For each track, find the best matching detection
         best_match_idx = np.argmax(combined_matrix, axis=1)
@@ -454,11 +447,9 @@ class MosaicMOT(MosaicDetSeg):
             cached_bbox = np.array(cached_bbox, dtype=np.int32)
             cached_area = (cached_bbox[2] - cached_bbox[0]) * (cached_bbox[3] - cached_bbox[1])
             area_ratios = np.abs(discarded_areas - cached_area) / (cached_area + 1e-6)
-            print("area_ratios: ", area_ratios)
             size_valid = area_ratios < area_threshold
 
             ious = self._intersection_over_area_vectorized(cached_bbox.reshape(1, 4), discarded_bboxes)[0]
-            print("ious: ", ious)
             valid_indices = np.where(size_valid)[0]
             if len(valid_indices) == 0:
                 continue
@@ -714,15 +705,11 @@ class MosaicMOT(MosaicDetSeg):
             ]
             for i in range(len(masks_array))
         ])
-        print("containment_matrix: ", containment_matrix)
 
         # Identify contained masks (a mask is contained if it's inside any other mask)
-        # We look at columns because we want to find masks that are contained within others
         contained_indices = np.where(np.any(containment_matrix, axis=0))[0]
         # Non-contained masks are those that aren't contained within any other mask
         non_contained_indices = np.where(~np.any(containment_matrix, axis=0))[0]
-        print("contained_indices: ", contained_indices)
-        print("non_contained_indices: ", non_contained_indices)
         if len(contained_indices) == 0:
             return matched_results
 
@@ -753,7 +740,6 @@ class MosaicMOT(MosaicDetSeg):
 
         # Extract features for new detections
         if new_detections:
-            print("frame.shape: ", self.frame.shape, full_size_mask.shape)
             new_features = self._extract_detection_features(self.frame, new_detections)
             new_embeddings = np.array([feat.get("embedding") for feat in new_features])
 
@@ -769,12 +755,10 @@ class MosaicMOT(MosaicDetSeg):
                 new_features,
                 embedding_similarities
             )
-            print("selected_detections_tuples: ", selected_detections_tuples)
 
             # Append valid detections to refined_results with track_ids
             for idx, cls_name, score in selected_detections_tuples:
                 if idx in valid_indices:
-                    print("idx: ", idx, "cls_name: ", cls_name, "score: ", score)
                     refined_results.append({
                         'bbox': new_detections[idx]['bbox'],
                         'mask': new_detections[idx]['mask'],
@@ -900,37 +884,37 @@ class MosaicMOT(MosaicDetSeg):
         )
         print(f"Step 1: Initial matching - {len(matched_results)} matched, {len(unmatched_track_ids)} unmatched tracks, {np.sum(unmatched_det_indices)} unmatched detections")
 
-        # # STEP 2: Recover unmatched tracks using discarded detections
-        # recovered_results = self._recover_with_discarded_detections(
-        #     unmatched_track_ids=unmatched_track_ids,
-        #     tracks=tracks,
-        #     discarded_detections=discarded_detections
-        # )
-        # print(f"Step 2: Recovered with discarded detections - {len(recovered_results)} objects")
+        # STEP 2: Recover unmatched tracks using discarded detections
+        recovered_results = self._recover_with_discarded_detections(
+            unmatched_track_ids=unmatched_track_ids,
+            tracks=tracks,
+            discarded_detections=discarded_detections
+        )
+        print(f"Step 2: Recovered with discarded detections - {len(recovered_results)} objects")
 
-        # # Update unmatched track IDs
-        # unmatched_track_ids = [track_id for track_id in unmatched_track_ids if track_id not in [res['track_id'] for res in recovered_results]]
+        # Update unmatched track IDs
+        unmatched_track_ids = [track_id for track_id in unmatched_track_ids if track_id not in [res['track_id'] for res in recovered_results]]
 
-        # # STEP 3: Match remaining problematic detections with cache-based rescue
-        # rescued_results = self._rescue_with_cache(
-        #     unmatched_det_indices=unmatched_det_indices,
-        #     bboxes=bboxes,
-        #     masks=masks,
-        #     detection_features=detection_features
-        # )
-        # print(f"Step 3: Rescued with cache - {len(rescued_results)} objects")
+        # STEP 3: Match remaining problematic detections with cache-based rescue
+        rescued_results = self._rescue_with_cache(
+            unmatched_det_indices=unmatched_det_indices,
+            bboxes=bboxes,
+            masks=masks,
+            detection_features=detection_features
+        )
+        print(f"Step 3: Rescued with cache - {len(rescued_results)} objects")
 
-        # # STEP 4: Recover completely missed detections using ByteTrack predictions
-        # missed_results = self._recover_missed_detections(
-        #     unmatched_track_ids=unmatched_track_ids,
-        #     tracks=tracks
-        # )
-        # print(f"Step 4: Recovered missed detections - {len(missed_results)} objects")
+        # STEP 4: Recover completely missed detections using ByteTrack predictions
+        missed_results = self._recover_missed_detections(
+            unmatched_track_ids=unmatched_track_ids,
+            tracks=tracks
+        )
+        print(f"Step 4: Recovered missed detections - {len(missed_results)} objects")
 
-        # # STEP 5:  Handle over-matched detections (merged objects)
-        # all_results = matched_results + recovered_results + rescued_results + missed_results
-        # refined_results = self._handle_overmatched_detections(matched_results=all_results)
-        # print(f"Step 5: After handling over-matched - {len(refined_results)} objects")
+        # STEP 5:  Handle over-matched detections (merged objects)
+        all_results = matched_results + recovered_results + rescued_results + missed_results
+        refined_results = self._handle_overmatched_detections(matched_results=all_results)
+        print(f"Step 5: After handling over-matched - {len(refined_results)} objects")
 
         refined_results = matched_results
 

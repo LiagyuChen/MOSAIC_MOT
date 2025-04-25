@@ -1,0 +1,11 @@
+torch
+torchvision
+torchaudio
+numpy
+pillow
+opencv-python
+ultralytics
+transformers
+scikit-learn
+openvino
+scikit-image

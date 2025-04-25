@@ -1,0 +1,12 @@
+nuitka
+pillow
+numpy==2.1.1
+lap>=0.5.12
+ultralytics
+transformers
+opencv-python
+
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1+cu124
+torchvision
+torchaudio

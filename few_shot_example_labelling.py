@@ -2,8 +2,8 @@ import os
 import cv2
 import torch
 import numpy as np
-from PIL import Image, ImageTk
 from ultralytics import SAM
+from PIL import Image, ImageTk
 import tkinter as tk
 from tkinter import ttk, filedialog
 from tkinter import Scale as TkScale

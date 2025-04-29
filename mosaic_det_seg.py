@@ -44,6 +44,8 @@ class MosaicDetSeg:
 
         # Load YOLO-E model
         self.yoloe_model = YOLOE(yoloe_model).to(self.device)
+        self.yoloe_conf = 0.2 if self.config.get("mosaic_mode", "accurate") == "accurate" else 0.7
+        self.instance_correspondence = True if self.config.get("mosaic_mode", "accurate") == "accurate" else False
 
         # Load SAM model
         self.sam_model = FastSAM(sam_model).to(self.device)
@@ -66,7 +68,7 @@ class MosaicDetSeg:
         self.label_names = self.feature_processor.label_names
         self.label_mappings = {name: i+1 for i, name in enumerate(self.label_names)}
         
-        print(f"Initialized MosaicDetSeg with {len(self.label_names)} classes")
+        logging.info(f"Initialized MosaicDetSeg with {len(self.label_names)} classes")
 
     # Detection and Segmentation
     def _detect_with_yoloe(
@@ -88,7 +90,7 @@ class MosaicDetSeg:
 
             # Run YOLO-E prediction (YOLO-E resizes internally)
             with torch.no_grad():
-                results = self.yoloe_model.predict(image, conf=0.2, iou=0.5)
+                results = self.yoloe_model.predict(image, conf=self.yoloe_conf, iou=0.5)
 
             if not results:
                 return []
@@ -151,7 +153,7 @@ class MosaicDetSeg:
         masks = results[0].masks.data
         if len(masks) == 0:
             return {}
-        print(f"Segmented {len(masks)} masks with bbox {detection_box}")
+        logging.info(f"Segmented {len(masks)} masks with bbox {detection_box}")
 
         # Convert masks to NumPy and resize to original image size
         mask_areas = []
@@ -163,8 +165,7 @@ class MosaicDetSeg:
                 mask_resized = cv2.resize(mask_tensor, (w, h), interpolation=cv2.INTER_NEAREST)
             else:
                 mask_resized = mask_tensor
-            
-            print(f"mask_resized.shape: {mask_resized.shape}", "image.shape: ", image.shape)
+
             area = np.sum(mask_resized)
             mask_areas.append(area)
             resized_masks.append(mask_resized)
@@ -268,9 +269,6 @@ class MosaicDetSeg:
                 x1, y1, x2, y2 = xs.min(), ys.min(), xs.max(), ys.max()
                 new_bboxes.append([x1, y1, x2, y2])
 
-        # Clear numpy arrays
-        del kernel, broken, num_labels, labels_cc, contours, bboxes, masks
-
         return np.array(new_bboxes), np.array(new_masks)
 
     def _remove_high_iou_bboxes(
@@ -356,9 +354,6 @@ class MosaicDetSeg:
                 union_inner = np.any(mask_stack[inner_ids], axis=0)
                 if np.sum(np.logical_and(union_inner, mask_stack[i])) / (mask_areas[i] + 1e-6) >= area_match_thresh:
                     to_keep[i] = False
-
-        # Clear numpy arrays
-        del valid_indices, sorted_valid_indices, current_valid, inner_ids
 
         return to_keep
 
@@ -455,9 +450,6 @@ class MosaicDetSeg:
                             to_keep[small_idx] = False
                         
                         break
-
-        # Clear numpy arrays
-        del valid_bboxes, valid_bbox_areas, x1, y1, x2, y2, iw, ih, inter_area, ratio_i_over_j, ratio_j_over_i, area_i, area_j, r_i, r_j
 
         return to_keep
     
@@ -561,7 +553,7 @@ class MosaicDetSeg:
                 to_keep[i] = False
 
         # Clear numpy arrays
-        del valid_mask_areas, sorted_valid_indices, overlap, overlap_area, ratios
+        del valid_mask_areas, sorted_valid_indices
 
         return to_keep
 
@@ -773,7 +765,7 @@ class MosaicDetSeg:
         shape_diffs = [np.abs(det_contour_shape_vector - ex_shape_vec) for ex_shape_vec in example_contour_shape_vectors]
         shape_diff_means = np.mean(shape_diffs, axis=0) if shape_diffs else np.zeros(3)
         shape_diff_score = np.mean(shape_diff_means)
-        print("Shape deviation score:", shape_diff_score)
+        logging.info(f"Shape deviation score: {shape_diff_score}")
 
         # Calculate L2 distance of hu-moments between contour features
         sigma = 1.0
@@ -788,7 +780,7 @@ class MosaicDetSeg:
             hu_moment_sims.append(sim)
 
         contour_similarity = float(np.mean(hu_moment_sims)) if hu_moment_sims else 0.0
-        print("Contour similarity: ", contour_similarity)
+        logging.info(f"Contour similarity: {contour_similarity}")
 
         combined_shape_score = contour_similarity * (1 - shape_diff_score)
 
@@ -813,7 +805,7 @@ class MosaicDetSeg:
         # Calculate patch score -- Averaged best-matched patch similarity
         patch_score = np.mean(patch_pair_similarity.max(axis=1))
         combined_patch_score = patch_score * (1 - det_patch_coverage) * (1 - det_patch_missing)
-        print("Patch Coverage: ", det_patch_coverage, "Patch Missing: ", det_patch_missing, "Patch Embedding Score: ", patch_score, "Combined Score: ", combined_patch_score)
+        logging.info(f"Patch Coverage: {det_patch_coverage} Patch Missing: {det_patch_missing} Patch Embedding Score: {patch_score} Combined Score: {combined_patch_score}")
 
         # Determine repair mode
         repair = False
@@ -863,8 +855,8 @@ class MosaicDetSeg:
             feats = all_detection_features[det_idx]
             shape_score, repair, all_scores = self.compute_shape_similarity(feats, cls)
             updated_score = score * 0.6 + shape_score * 0.4
-            print("class label: ", cls, "updated_score: ", updated_score, "score: ", score, "shape_score: ", shape_score, "repair: ", repair)
-            print("--------------------------------")
+            logging.info(f"class label: {cls} updated_score: {updated_score} score: {score} shape_score: {shape_score} repair: {repair}")
+            logging.info("--------------------------------")
             repair_meta.append({
                 'class_name': cls,
                 'score': updated_score,
@@ -965,14 +957,18 @@ class MosaicDetSeg:
 
         # Initial Detection (YOLO-E)
         initial_detections = self._detect_with_yoloe(image)
-        print(f"Initial YOLO-E detections: {len(initial_detections)}")
+        logging.info(f"Initial YOLO-E detections: {len(initial_detections)}")
         if not initial_detections:
             return []
 
         # Deduplicate detections
-        deduplicated_detections, discarded_detections = self._filter_and_deduplicate_detections(initial_detections)
-        print(f"Detections after deduplication: {len(deduplicated_detections)}")
-        print(f"Discarded detections: {len(discarded_detections)}")
+        if self.instance_correspondence:
+            deduplicated_detections, discarded_detections = self._filter_and_deduplicate_detections(initial_detections)
+        else:
+            deduplicated_detections = initial_detections
+            discarded_detections = []
+        logging.info(f"Detections after deduplication: {len(deduplicated_detections)}")
+        logging.info(f"Discarded detections: {len(discarded_detections)}")
         if not deduplicated_detections:
             return []
 
@@ -981,7 +977,7 @@ class MosaicDetSeg:
             image,
             deduplicated_detections
         )
-        print(f"Features extracted for {len(all_detection_features)} detections.")
+        logging.info(f"Features extracted for {len(all_detection_features)} detections.")
         if not all_detection_features:
             return [] 
 
@@ -991,7 +987,7 @@ class MosaicDetSeg:
             all_detection_features,
             embedding_similarities
         )
-        print(f"Detections after initial similarity gating: {len(selected_detections_tuples)}")
+        logging.info(f"Detections after initial similarity gating: {len(selected_detections_tuples)}")
         if not selected_detections_tuples:
             return []
 
@@ -1001,7 +997,7 @@ class MosaicDetSeg:
             selected_detections_tuples,
             discarded_detections
         )
-        print(f"Detections after repair stage: {len(final_detections)}")
+        logging.info(f"Detections after repair stage: {len(final_detections)}")
 
         # Clear all used memory and variables, including numpy arrays, keeping only final_detections
         del initial_detections
@@ -1135,6 +1131,7 @@ if __name__ == "__main__":
         },
 
         # Mosaic Detection and Segmentation configuration
+        "mosaic_mode": "accurate",
         "large_image_threshold": 1088,
         "mask_area_thresh": 0.8,
         "conflict_thresh": 0.1,
@@ -1155,8 +1152,15 @@ if __name__ == "__main__":
         "min_mask_area": 100,
         "visualization_alpha": 0.6,
     }
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+
     detector = MosaicDetSeg(
-        yoloe_model="yoloe-11l-seg-pf.pt",
+        yoloe_model="weights/yoloe-11l-seg-pf.pt",
         sam_model="weights/FastSAM-x.pt",
         examples_root="demo/toys_label",
         cache_file="demo/toys_label/mosaic_example_features.pkl",
@@ -1172,8 +1176,6 @@ if __name__ == "__main__":
 
     input_dir = "demo/toy1_frames"
     output_dir = "demo/final_results/mosaic1_det_seg_outs2"
-    # input_dir = "demo/toy1_frames_special"
-    # output_dir = "demo/mosaic_det_seg_outs_special"
     os.makedirs(output_dir, exist_ok=True)
     for image_path in os.listdir(input_dir):
         image = Image.open(os.path.join(input_dir, image_path))

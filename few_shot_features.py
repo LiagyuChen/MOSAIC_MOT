@@ -458,18 +458,6 @@ class FewShotProcessor:
         else:
             binary_mask = (image > 10).astype(np.uint8) * 255
 
-        # y_idx, x_idx = np.nonzero(binary_mask)
-        # x1, x2 = max(0, x_idx.min()-2), min(image.shape[1], x_idx.max()+3)
-        # y1, y2 = max(0, y_idx.min()-2), min(image.shape[0], y_idx.max()+3)
-        # masked_image = image[y1:y2, x1:x2].copy()
-        # binary_mask = binary_mask[y1:y2, x1:x2]
-
-        # if masked_image.ndim == 3:
-        #     mask_3d = np.expand_dims(binary_mask > 0, axis=2)
-        #     masked_image = masked_image * mask_3d
-        # else:
-        #     masked_image = masked_image * (binary_mask > 0)
-
         masked_image = image
         pil_masked = Image.fromarray(masked_image)
         self.image_height, self.image_width = masked_image.shape[:2]

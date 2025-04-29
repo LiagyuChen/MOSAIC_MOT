@@ -243,7 +243,6 @@ class MosaicMOT(MosaicDetSeg):
         Returns:
             Matrix where each element [i,j] represents the intersection area divided by area of box2[j]
         """
-
         # Compute intersection
         x1 = np.maximum(boxes1[:, None, 0], boxes2[:, 0])
         y1 = np.maximum(boxes1[:, None, 1], boxes2[:, 1])
@@ -299,11 +298,11 @@ class MosaicMOT(MosaicDetSeg):
         n_tracks = len(tracks)
         n_detections = len(bboxes)
         max_dim = max(n_tracks, n_detections)
-        
+
         # Compute IoU between predicted boxes and detection boxes
         predicted_bbox = tracks[:, :4]
         predicted_bbox_reshaped = predicted_bbox.reshape(-1, 4)
-        
+
         # Calculate raw IoU matrix
         raw_bbox_iou = self._iou_vectorized(predicted_bbox_reshaped, bboxes)
         
@@ -314,7 +313,7 @@ class MosaicMOT(MosaicDetSeg):
         # Compute mask IoU
         track_masks = np.array([self.tracked_objects_cache.get(int(track[4]), {}).get('last_mask', np.zeros_like(masks[0])) 
                               for track in tracks])
-                              
+
         # Calculate raw mask IoU matrix
         raw_mask_iou = self._compute_mask_iou(track_masks, masks)
         
@@ -330,42 +329,36 @@ class MosaicMOT(MosaicDetSeg):
         for track in tracks:
             track_id = int(track[4])
             track_embed = self.tracked_objects_cache.get(track_id, {}).get('features', {}).get('embedding', None)
-            if track_embed is not None:
-                track_embeddings.append(track_embed)
-            else:
-                # Use zeros as placeholder for missing embeddings
-                if len(det_embeddings) > 0 and det_embeddings[0] is not None:
-                    track_embeddings.append(np.zeros_like(det_embeddings[0]))
-                else:
-                    # If we don't know the embedding shape, use a default
-                    track_embeddings.append(np.zeros(2304))  # Use typical embedding size
-        
+            track_embeddings.append(track_embed or np.zeros(2304))
+
         track_embeddings = np.array(track_embeddings)
 
         # Calculate embedding similarity with error handling
         raw_bi_softmax = self._bi_softmax_cosine_similarity(track_embeddings, det_embeddings)
-        
+
         # Create padded embedding similarity matrix
         bi_softmax_sim = np.zeros((max_dim, max_dim))
         bi_softmax_sim[:len(track_embeddings), :len(det_embeddings)] = raw_bi_softmax
-        
-        # Handle missing tracks (new detections) - set high value (2.0) to prioritize
+
+        # Handle missing tracks (new detections)
         if n_detections > n_tracks:
-            # For extra detections that have no tracks, set diagonal to 2.0 to ensure they're matched
             for i in range(n_tracks, n_detections):
-                bi_softmax_sim[i, i] = 2.0
+                bi_softmax_sim[i, i] = 0.0
 
         # Combine metrics
+        # combined_matrix = (bbox_iou_matrix >= iou_threshold).astype(float) + \
+        #                  (mask_iou_matrix >= mask_iou_threshold).astype(float) + \
+        #                  (bi_softmax_sim >= embedding_threshold).astype(float)
         combined_matrix = (bbox_iou_matrix >= iou_threshold).astype(float) + \
-                         (mask_iou_matrix >= mask_iou_threshold).astype(float) + \
-                         (bi_softmax_sim >= embedding_threshold).astype(float)
+                         (mask_iou_matrix >= mask_iou_threshold).astype(float)
+ 
 
         # For each track, find the best matching detection
         best_match_idx = np.argmax(combined_matrix, axis=1)
         best_match_count = np.max(combined_matrix, axis=1)
 
         # Valid matches have at least 2 of the 3 criteria met
-        valid_matches = best_match_count >= 2
+        valid_matches = best_match_count >= 1
 
         # Create matched results
         matched_results = []
@@ -391,7 +384,7 @@ class MosaicMOT(MosaicDetSeg):
                     "bbox_prediction": predicted_bbox[i]
                 }
                 matched_results.append(result)
-                
+
         # Process "virtual" tracks (padding for new detections)
         for i in range(n_tracks, max_dim):
             match_idx = best_match_idx[i]
@@ -708,7 +701,6 @@ class MosaicMOT(MosaicDetSeg):
 
         # Identify contained masks (a mask is contained if it's inside any other mask)
         contained_indices = np.where(np.any(containment_matrix, axis=0))[0]
-        # Non-contained masks are those that aren't contained within any other mask
         non_contained_indices = np.where(~np.any(containment_matrix, axis=0))[0]
         if len(contained_indices) == 0:
             return matched_results
@@ -830,7 +822,8 @@ class MosaicMOT(MosaicDetSeg):
                 self.tracked_objects_cache[track_id]["frames_missing"] += 1
 
         # Remove outdated cache entries
-        for track_id, info in self.tracked_objects_cache.items():
+        for track_id in list(self.tracked_objects_cache.keys()):
+            info = self.tracked_objects_cache[track_id]
             if info.get("frames_missing", 0) > self.max_frames_missing:
                 del self.tracked_objects_cache[track_id]
 
@@ -882,39 +875,39 @@ class MosaicMOT(MosaicDetSeg):
             original_labels=original_labels,
             scores=scores
         )
-        print(f"Step 1: Initial matching - {len(matched_results)} matched, {len(unmatched_track_ids)} unmatched tracks, {np.sum(unmatched_det_indices)} unmatched detections")
+        logging.info(f"Step 1: Initial matching - {len(matched_results)} matched, {len(unmatched_track_ids)} unmatched tracks, {np.sum(unmatched_det_indices)} unmatched detections")
 
-        # STEP 2: Recover unmatched tracks using discarded detections
-        recovered_results = self._recover_with_discarded_detections(
-            unmatched_track_ids=unmatched_track_ids,
-            tracks=tracks,
-            discarded_detections=discarded_detections
-        )
-        print(f"Step 2: Recovered with discarded detections - {len(recovered_results)} objects")
+        # # STEP 2: Recover unmatched tracks using discarded detections
+        # recovered_results = self._recover_with_discarded_detections(
+        #     unmatched_track_ids=unmatched_track_ids,
+        #     tracks=tracks,
+        #     discarded_detections=discarded_detections
+        # )
+        # logging.info(f"Step 2: Recovered with discarded detections - {len(recovered_results)} objects")
 
-        # Update unmatched track IDs
-        unmatched_track_ids = [track_id for track_id in unmatched_track_ids if track_id not in [res['track_id'] for res in recovered_results]]
+        # # Update unmatched track IDs
+        # unmatched_track_ids = [track_id for track_id in unmatched_track_ids if track_id not in [res['track_id'] for res in recovered_results]]
 
-        # STEP 3: Match remaining problematic detections with cache-based rescue
-        rescued_results = self._rescue_with_cache(
-            unmatched_det_indices=unmatched_det_indices,
-            bboxes=bboxes,
-            masks=masks,
-            detection_features=detection_features
-        )
-        print(f"Step 3: Rescued with cache - {len(rescued_results)} objects")
+        # # STEP 3: Match remaining problematic detections with cache-based rescue
+        # rescued_results = self._rescue_with_cache(
+        #     unmatched_det_indices=unmatched_det_indices,
+        #     bboxes=bboxes,
+        #     masks=masks,
+        #     detection_features=detection_features
+        # )
+        # logging.info(f"Step 3: Rescued with cache - {len(rescued_results)} objects")
 
-        # STEP 4: Recover completely missed detections using ByteTrack predictions
-        missed_results = self._recover_missed_detections(
-            unmatched_track_ids=unmatched_track_ids,
-            tracks=tracks
-        )
-        print(f"Step 4: Recovered missed detections - {len(missed_results)} objects")
+        # # STEP 4: Recover completely missed detections using ByteTrack predictions
+        # missed_results = self._recover_missed_detections(
+        #     unmatched_track_ids=unmatched_track_ids,
+        #     tracks=tracks
+        # )
+        # logging.info(f"Step 4: Recovered missed detections - {len(missed_results)} objects")
 
-        # STEP 5:  Handle over-matched detections (merged objects)
-        all_results = matched_results + recovered_results + rescued_results + missed_results
-        refined_results = self._handle_overmatched_detections(matched_results=all_results)
-        print(f"Step 5: After handling over-matched - {len(refined_results)} objects")
+        # # STEP 5:  Handle over-matched detections (merged objects)
+        # all_results = matched_results + recovered_results + rescued_results + missed_results
+        # refined_results = self._handle_overmatched_detections(matched_results=all_results)
+        # logging.info(f"Step 5: After handling over-matched - {len(refined_results)} objects")
 
         refined_results = matched_results
 
@@ -924,7 +917,7 @@ class MosaicMOT(MosaicDetSeg):
             unmatched_track_indices=np.array([i for i, track in enumerate(tracks) if int(track[4]) in unmatched_track_ids]),
             tracks=tracks
         )
-        print(f"Step 6: Updated tracking cache - {len(self.tracked_objects_cache)} tracked objects")
+        logging.info(f"Step 6: Updated tracking cache - {len(self.tracked_objects_cache)} tracked objects")
 
         return refined_results
 
@@ -1013,7 +1006,6 @@ class MosaicMOT(MosaicDetSeg):
         Returns:
             Number of frames processed
         """
-
         # Open the input video
         reader = imageio.get_reader(video_path, format='ffmpeg')
         fps = reader.get_meta_data()['fps']
@@ -1030,7 +1022,7 @@ class MosaicMOT(MosaicDetSeg):
         # Create debug directory for saving annotated frames
         if save_annotated_frame_path is not None:
             os.makedirs(save_annotated_frame_path, exist_ok=True)
-            print(f"Debug frames will be saved to: {save_annotated_frame_path}")
+            logging.info(f"Debug frames will be saved to: {save_annotated_frame_path}")
 
         # Process video frames
         text_color = config.get("text_color", (0, 0, 255))
@@ -1043,7 +1035,7 @@ class MosaicMOT(MosaicDetSeg):
                 # frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame_rgb = frame
                 detection_results = self.detect_and_segment(frame_rgb)
-                print(f"Frame {i}: Detection results - {len(detection_results)}")
+                logging.info(f"Frame {i}: Detection results - {len(detection_results)}")
 
                 matched_results = []
                 if len(detection_results) > 0:
@@ -1053,7 +1045,7 @@ class MosaicMOT(MosaicDetSeg):
                         frame_rgb=frame_rgb,
                         frame_idx=i
                     )
-                print(f"Frame {i}: Mosaic MOT results - {len(matched_results)} objects")
+                logging.info(f"Frame {i}: Mosaic MOT results - {len(matched_results)} objects")
 
                 # Store results for next frame
                 for result in matched_results:
@@ -1091,7 +1083,7 @@ class MosaicMOT(MosaicDetSeg):
                     # Check if box is valid
                     h, w = frame.shape[:2]
                     if x1 < 0 or y1 < 0 or x2 >= w or y2 >= h:
-                        print(f"WARNING: Box coordinates out of bounds! Image size: {w}x{h}")
+                        logging.warning(f"WARNING: Box coordinates out of bounds! Image size: {w}x{h}")
                         # Clip the coordinates to frame boundaries
                         x1, y1 = max(0, x1), max(0, y1)
                         x2, y2 = min(w-1, x2), min(h-1, y2)
@@ -1148,12 +1140,12 @@ def mosaic_mot(
     save_annotated_frame_path: str = None,
     config: Dict[str, Any] | None = None, 
 ) -> None:
-    print(f"Starting tracking with similarity threshold: {config.get('similarity_threshold')}")
+    logging.info(f"Starting tracking with similarity threshold: {config.get('similarity_threshold')}")
     t_start = time.time()
 
     # Load ByteTrack configuration
     tracker_cfg = get_cfg(bytetrack_cfg_path)
-    print(f"ByteTrack configuration: {tracker_cfg}")
+    logging.info(f"ByteTrack configuration: {tracker_cfg}")
     tracker = BYTETracker(tracker_cfg)
 
     # Initialize FewShotSelector with configurable parameters
@@ -1175,7 +1167,7 @@ def mosaic_mot(
 
     t_end = time.time()
     processing_time = t_end - t_start
-    print(f"Processed {frame_count} frames in {processing_time:.2f}s ({frame_count / processing_time:.2f} FPS)")
+    logging.info(f"Processed {frame_count} frames in {processing_time:.2f}s ({frame_count / processing_time:.2f} FPS)")
 
 
 if __name__ == "__main__":
@@ -1207,6 +1199,7 @@ if __name__ == "__main__":
         },
 
         # MOSAIC-DET-SEG configurations
+        "mosaic_mode": "accurate",
         "large_image_threshold": 1088,
         "mask_area_thresh": 0.8,
         "conflict_thresh": 0.1,
@@ -1246,15 +1239,22 @@ if __name__ == "__main__":
         "text_color": (255, 0, 0),
         "visualization_alpha": 0.6,
     }
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
     mosaic_mot(
         bytetrack_cfg_path="bytetrack.yaml",
         video_path="demo/toy1.mp4",
         output_path="demo/final_results/toy1_mosaic_mot_out.mp4",
-        yoloe_model="yoloe-11l-seg-pf.pt",
-        sam_model="FastSAM-s.pt",
+        yoloe_model="weights/yoloe-11l-seg-pf.pt",
+        sam_model="weights/FastSAM-s.pt",
         examples_root="demo/toys_label",
         cache_file="demo/toys_label/mosaic_example_features.pkl",
         dinov2_model="facebook/dinov2-base",
         save_annotated_frame_path="demo/final_results/debug_frames",
         config=config
     )
+

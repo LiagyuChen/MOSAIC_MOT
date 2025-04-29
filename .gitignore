@@ -1,0 +1,60 @@
+# Ignore specific folders
+demo_tests/
+papers/
+groundingdino/
+weights/
+LabelingInterface/weights/
+LabelingInterface/.vscode/
+LabelingInterface/venv/
+LabelingInterface/build/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+.env
+.venv/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Compiled code
+*/build/
+*/dist/
+*.o
+*.so
+*.dylib
+*.dll
+
+# Logs and databases
+*.log
+*.sqlite

@@ -1,4 +1,4 @@
-# MOSACI-MOT: Motion‑&‑Object Segmentation with Adaptive Instance Correspondence
+# MOSAIC-MOT: Motion‑&‑Object Segmentation with Adaptive Instance Correspondence
 
 ## Overview
 This project presents MOSAIC-MOT, a robust few-shot multi-object tracking (MOT) system designed to address the challenges of tracking arbitrary objects in complex, real-world environments. Unlike traditional MOT methods, which rely heavily on large-scale training datasets and fixed object categories, MOSAIC-MOT leverages few-shot examples, a small set of annotated images, to recognise and track custom objects without extensive retraining. Built upon a detect-segment-then-track pipeline, the system integrates YOLO-E for initial detection and segmentation, refined through an innovative Instance Correspondence process that resolves ambiguities such as partial, exact, and over-matched detections. This ensures clean, instance-level object recognition across varied object types and scenes.
